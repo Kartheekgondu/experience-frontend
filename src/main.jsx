@@ -115,47 +115,62 @@ function App() {
     }
   };
 
-  const validate = () => {
+  const validate = (candidate = form) => {
     // Every field must contain at least one meaningful value. This rejects
     // empty strings and whitespace-only values before any letter action.
     const requiredFields = [
-      ['Full Name', form.name],
-      ['Employee ID', form.employeeId],
-      ['Designation', form.designation],
-      ['Letter Date', form.letterDate],
-      ['Date of Joining', form.doj],
-      ['Last Working Date', form.lastWorkingDate],
-      ['Recipient Email', form.email]
+      ['Full Name', candidate.name],
+      ['Employee ID', candidate.employeeId],
+      ['Designation', candidate.designation],
+      ['Letter Date', candidate.letterDate],
+      ['Date of Joining', candidate.doj],
+      ['Last Working Date', candidate.lastWorkingDate],
+      ['Recipient Email', candidate.email]
     ];
     const emptyField = requiredFields.find(([, value]) => !String(value ?? '').trim());
     if (emptyField) return `${emptyField[0]} is required. Enter at least one character or select a valid date.`;
     const repeatedField = requiredFields.find(([, value]) => hasRepeatedRun(value));
     if (repeatedField) return `${repeatedField[0]} cannot contain the same character 5 or more times in a row.`;
     if (Object.values(form).some(value => String(value ?? '').length > 50)) return 'Every field must contain no more than 50 characters.';
-    if (!/^[\p{L}]+(?: [\p{L}]+)*$/u.test(form.name.trim())) return 'Full Name must contain letters and single spaces only.';
-    if (!/^[A-Z0-9]{1,50}$/.test(form.employeeId)) return 'Employee ID must contain letters and numbers only (maximum 50 characters).';
-    if (!/^[\p{L}]+(?: [\p{L}]+)*$/u.test(form.designation.trim())) return 'Designation must contain letters and single spaces only.';
-    if (form.doj >= form.lastWorkingDate) return 'Last working date must be after date of joining.';
-    if (form.letterDate <= form.lastWorkingDate || form.letterDate > getToday()) return 'Letter date must be after last working date and cannot be in the future.';
-    if (!/^[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*@[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+$/.test(form.email)) return 'Enter a valid recipient email address.';
+    if (!/^[\p{L}]+(?: [\p{L}]+)*$/u.test(candidate.name.trim())) return 'Full Name must contain letters and single spaces only.';
+    if (!/^[A-Z0-9]{1,50}$/.test(candidate.employeeId)) return 'Employee ID must contain letters and numbers only (maximum 50 characters).';
+    if (!/^[\p{L}]+(?: [\p{L}]+)*$/u.test(candidate.designation.trim())) return 'Designation must contain letters and single spaces only.';
+    if (candidate.doj >= candidate.lastWorkingDate) return 'Last working date must be after date of joining.';
+    if (candidate.letterDate <= candidate.lastWorkingDate || candidate.letterDate > getToday()) return 'Letter date must be after last working date and cannot be in the future.';
+    if (!/^[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*@[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+$/.test(candidate.email)) return 'Enter a valid recipient email address.';
     return '';
   };
 
   const generate = async () => {
-    if (!form.employeeId.trim()) { setStatus('Please enter an Employee ID.'); return; }
-    if (fetchedForId !== form.employeeId.trim().toUpperCase()) {
-      const found = await lookupEmployee();
-      if (found) {
-        // lookupEmployee populates the original form and opens the preview
-        // automatically when the stored employee record is complete.
-        setStatus('Employee details fetched. Review the populated form and letter preview.');
-      }
+    const employeeId = form.employeeId.trim().toUpperCase();
+    if (!employeeId) {
+      setStatus('Please enter an Employee ID.');
       return;
     }
+
+    // Try automatic lookup once for this ID. If the ID is not in employee_master
+    // or experience_sends, continue with the original form so manual entry works.
+    if (fetchedForId !== employeeId) {
+      const found = await lookupEmployee(employeeId);
+      if (found) {
+        // lookupEmployee has populated the form. If the record is complete it
+        // already opens the preview; otherwise ask the user to complete blanks.
+        setStatus('Employee details fetched. Review the populated fields, then click Generate Letter again if any fields needed completion.');
+        return;
+      }
+      // A 404 is not a blocker: users may complete the original form manually.
+      // Network/server errors are also followed by normal client-side validation,
+      // so a temporary lookup failure does not prevent letter generation.
+    }
+
     const error = validate();
-    if (error) { setStatus(error); return; }
+    if (error) {
+      setLetter(false);
+      setStatus(error);
+      return;
+    }
     setLetter(true);
-    setStatus('Experience letter preview generated.');
+    setStatus('Experience letter preview generated successfully.');
   };
 
   const makePdf = () => {
