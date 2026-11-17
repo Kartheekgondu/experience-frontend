@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { jsPDF } from 'jspdf';
 import './style.css';
@@ -22,6 +22,7 @@ function App() {
   const [letter, setLetter] = useState(false);
   const [loading, setLoading] = useState(false);
   const [fetchedForId, setFetchedForId] = useState('');
+  const [previousLetter, setPreviousLetter] = useState(null);
 
   // Keep every field in the original form. Changing the Employee ID clears old
   // employee values so details from a previous employee can never be reused.
@@ -63,13 +64,14 @@ function App() {
       setLetter(false);
       setHistory([]);
       setHistoryVisible(false);
-      setStatus('Enter an Employee ID. Employee details will be fetched when you leave this field.');
+      setPreviousLetter(null);
+      setStatus(value.length >= 3 ? 'Searching for employee details and previous letters...' : 'Enter the previous Employee ID. Details and saved letters will load automatically.');
       return;
     }
     setForm(current => ({ ...current, [name]: value }));
   };
 
-  const lookupEmployee = async (idValue = form.employeeId) => {
+  const lookupEmployee = async (idValue = form.employeeId, isCurrent = () => true) => {
     const id = String(idValue || '').trim().toUpperCase();
     if (!id) return false;
     if (hasRepeatedRun(id)) {
@@ -83,6 +85,7 @@ function App() {
       const raw = await response.text();
       let data = {};
       try { data = raw ? JSON.parse(raw) : {}; } catch { data = { error: raw }; }
+      if (!isCurrent()) return false;
       if (response.status === 404) {
         setFetchedForId('');
         setLetter(false);
@@ -108,10 +111,10 @@ function App() {
         : `Employee ${id} was found, but some details are missing. Complete the empty fields and click Generate Letter.`);
       return true;
     } catch (error) {
-      setStatus(`Employee lookup failed: ${error.message}. Check that Spring Boot is running at ${API}.`);
+      if (isCurrent()) setStatus(`Employee lookup failed: ${error.message}. Check that Spring Boot is running at ${API}.`);
       return false;
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   };
 
@@ -196,7 +199,7 @@ function App() {
     makePdf().save(`${form.employeeId}_Experience_Letter.pdf`);
   };
 
-  const loadHistory = async (id = form.employeeId) => {
+  const loadHistory = async (id = form.employeeId, isCurrent = () => true) => {
     const employeeId = String(id || '').trim().toUpperCase();
     if (!employeeId) {
       setHistory([]);
@@ -216,18 +219,37 @@ function App() {
         const message = rows.error || rows.message || `Could not load history (HTTP ${response.status})`;
         throw new Error(message);
       }
+      if (!isCurrent()) return;
       const records = Array.isArray(rows) ? rows : [];
       setHistory(records);
+      setPreviousLetter(records.find(item => item.pdf_path) || null);
       setStatus(records.length
         ? `Found ${records.length} previous letter${records.length === 1 ? '' : 's'} for ${employeeId}.`
         : `No previous letters found for Employee ID ${employeeId}.`);
     } catch (error) {
-      setHistory([]);
-      setStatus(`Letter history error: ${error.message}. Check that Spring Boot is running at ${API}.`);
+      if (isCurrent()) {
+        setHistory([]);
+        setPreviousLetter(null);
+        setStatus(`Letter history error: ${error.message}. Check that Spring Boot is running at ${API}.`);
+      }
     } finally {
-      setHistoryLoading(false);
+      if (isCurrent()) setHistoryLoading(false);
     }
   };
+
+  // Automatically fetch employee details and previous letter history after the
+  // user pauses typing. The debounce prevents a request for every keystroke.
+  useEffect(() => {
+    const employeeId = String(form.employeeId || '').trim().toUpperCase();
+    if (employeeId.length < 3) return undefined;
+    let cancelled = false;
+    const isCurrent = () => !cancelled;
+    const timer = setTimeout(async () => {
+      await lookupEmployee(employeeId, isCurrent);
+      if (isCurrent()) await loadHistory(employeeId, isCurrent);
+    }, 700);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [form.employeeId]);
 
   const formatHistoryDate = (value) => {
     if (!value) return '';
@@ -289,7 +311,7 @@ function App() {
         </label>)}
       </div>
       <div className="actions">
-        <button type="button" onClick={generate} disabled={loading}>{loading ? 'Please wait...' : 'Generate Letter'}</button>
+        <button type="button" onClick={generate}>Generate Letter</button>
         <button className="secondary" onClick={() => loadHistory()} disabled={loading || historyLoading}>{historyLoading ? 'Searching...' : 'Find Letter History'}</button>
       </div>
     </section>
@@ -315,10 +337,17 @@ function App() {
         <h2>Letter History — {form.employeeId || 'Employee'}</h2>
         <button className="secondary" onClick={() => { setHistoryVisible(false); setHistory([]); }}>Close</button>
       </div>
-      {historyLoading ? <p>Searching previous letters...</p> : history.length > 0 ? history.map((item, index) => <div className="history" key={item.id || index}>
-        <span>{item.employee_name || form.name || item.employee_id} · {item.status} · {formatHistoryDate(item.created_at)}</span>
-        {item.pdf_path ? <button className="secondary" onClick={() => openPdf(item.pdf_path)}>View PDF</button> : <span>No PDF available</span>}
-      </div>) : <p>No previous letters found for this Employee ID.</p>}
+      {historyLoading ? <p>Searching previous letters...</p> : history.length > 0 ? <>
+        {previousLetter?.pdf_path && <div className="previous-letter-preview">
+          <h3>Latest Previous Experience Letter</h3>
+          <iframe title="Previous experience letter" src={`${API}/api/experience-pdf?path=${encodeURIComponent(previousLetter.pdf_path)}`} />
+          <button className="secondary" type="button" onClick={() => openPdf(previousLetter.pdf_path)}>Open PDF in new tab</button>
+        </div>}
+        {history.map((item, index) => <div className="history" key={item.id || index}>
+          <span>{item.employee_name || form.name || item.employee_id} · {item.status} · {formatHistoryDate(item.created_at)}</span>
+          {item.pdf_path ? <button className="secondary" onClick={() => { setPreviousLetter(item); }} type="button">Display this letter</button> : <span>No PDF available</span>}
+        </div>)}
+      </> : <p>No previous letters found for this Employee ID.</p>}
     </section>}
     {status && <p className="status" role="status">{status}</p>}
     <footer>UXINTERFACELY IT SOLUTIONS LLP</footer>
