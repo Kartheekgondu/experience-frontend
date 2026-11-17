@@ -199,15 +199,15 @@ function App() {
     makePdf().save(`${form.employeeId}_Experience_Letter.pdf`);
   };
 
-  const loadHistory = async (id = form.employeeId, isCurrent = () => true) => {
+  const loadHistory = async (id = form.employeeId, isCurrent = () => true, reveal = true) => {
     const employeeId = String(id || '').trim().toUpperCase();
     if (!employeeId) {
       setHistory([]);
-      setHistoryVisible(true);
-      setStatus('Please enter an Employee ID before finding letter history.');
+      if (reveal) setHistoryVisible(true);
+      if (reveal) setStatus('Please enter an Employee ID before finding letter history.');
       return;
     }
-    setHistoryVisible(true);
+    if (reveal) setHistoryVisible(true);
     setHistoryLoading(true);
     setHistory([]);
     try {
@@ -223,14 +223,14 @@ function App() {
       const records = Array.isArray(rows) ? rows : [];
       setHistory(records);
       setPreviousLetter(records.find(item => item.pdf_path) || null);
-      setStatus(records.length
+      if (reveal) setStatus(records.length
         ? `Found ${records.length} previous letter${records.length === 1 ? '' : 's'} for ${employeeId}.`
         : `No previous letters found for Employee ID ${employeeId}.`);
     } catch (error) {
       if (isCurrent()) {
         setHistory([]);
         setPreviousLetter(null);
-        setStatus(`Letter history error: ${error.message}. Check that Spring Boot is running at ${API}.`);
+        if (reveal) setStatus(`Letter history error: ${error.message}. Check that Spring Boot is running at ${API}.`);
       }
     } finally {
       if (isCurrent()) setHistoryLoading(false);
@@ -246,7 +246,7 @@ function App() {
     const isCurrent = () => !cancelled;
     const timer = setTimeout(async () => {
       await lookupEmployee(employeeId, isCurrent);
-      if (isCurrent()) await loadHistory(employeeId, isCurrent);
+      if (isCurrent()) await loadHistory(employeeId, isCurrent, false);
     }, 700);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [form.employeeId]);
@@ -332,23 +332,25 @@ function App() {
         <img className="signature" src="/signature.png" alt="Authorized signature" />
       </article>
     </section>}
-    {historyVisible && <section className="panel history-panel">
-      <div className="history-heading">
-        <h2>Letter History — {form.employeeId || 'Employee'}</h2>
-        <button className="secondary" onClick={() => { setHistoryVisible(false); setHistory([]); }}>Close</button>
-      </div>
-      {historyLoading ? <p>Searching previous letters...</p> : history.length > 0 ? <>
-        {previousLetter?.pdf_path && <div className="previous-letter-preview">
-          <h3>Latest Previous Experience Letter</h3>
-          <iframe title="Previous experience letter" src={`${API}/api/experience-pdf?path=${encodeURIComponent(previousLetter.pdf_path)}`} />
-          <button className="secondary" type="button" onClick={() => openPdf(previousLetter.pdf_path)}>Open PDF in new tab</button>
-        </div>}
-        {history.map((item, index) => <div className="history" key={item.id || index}>
-          <span>{item.employee_name || form.name || item.employee_id} · {item.status} · {formatHistoryDate(item.created_at)}</span>
-          {item.pdf_path ? <button className="secondary" onClick={() => { setPreviousLetter(item); }} type="button">Display this letter</button> : <span>No PDF available</span>}
-        </div>)}
-      </> : <p>No previous letters found for this Employee ID.</p>}
-    </section>}
+    {historyVisible && <div className="history-backdrop" role="presentation" onClick={() => setHistoryVisible(false)}>
+      <section className="panel history-panel" role="dialog" aria-modal="true" aria-labelledby="history-title" onClick={event => event.stopPropagation()}>
+        <div className="history-heading">
+          <h2 id="history-title">Letter History — {form.employeeId || 'Employee'}</h2>
+          <button className="secondary" type="button" onClick={() => setHistoryVisible(false)}>Close</button>
+        </div>
+        {historyLoading ? <p>Searching previous letters...</p> : history.length > 0 ? <>
+          {previousLetter?.pdf_path && <div className="previous-letter-preview">
+            <h3>Latest Previous Experience Letter</h3>
+            <iframe title="Previous experience letter" src={`${API}/api/experience-pdf?path=${encodeURIComponent(previousLetter.pdf_path)}`} />
+            <button className="secondary" type="button" onClick={() => openPdf(previousLetter.pdf_path)}>Open PDF in new tab</button>
+          </div>}
+          {history.map((item, index) => <div className="history" key={item.id || index}>
+            <span>{item.employee_name || form.name || item.employee_id} · {item.status} · {formatHistoryDate(item.created_at)}</span>
+            {item.pdf_path ? <button className="secondary" onClick={() => setPreviousLetter(item)} type="button">Display this letter</button> : <span>No PDF available</span>}
+          </div>)}
+        </> : <p>No previous letters found for this Employee ID.</p>}
+      </section>
+    </div>}
     {status && <p className="status" role="status">{status}</p>}
     <footer>UXINTERFACELY IT SOLUTIONS LLP</footer>
   </main>;
