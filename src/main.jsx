@@ -142,16 +142,31 @@ function App() {
   };
 
   const generate = async () => {
-    if (!form.employeeId.trim()) { setStatus('Please enter an Employee ID.'); return; }
-    if (fetchedForId !== form.employeeId.trim().toUpperCase()) {
-      const found = await lookupEmployee();
+    const employeeId = String(form.employeeId || '').trim().toUpperCase();
+    if (!employeeId) { setStatus('Please enter an Employee ID.'); return; }
+
+    // Do not trigger a lookup on input blur: that can disable the button
+    // between pointer-down and click. Lookup is performed only after the
+    // Generate button has actually been activated.
+    if (fetchedForId !== employeeId) {
+      const found = await lookupEmployee(employeeId);
       if (found) {
-        // lookupEmployee populates the original form and opens the preview
-        // automatically when the stored employee record is complete.
-        setStatus('Employee details fetched. Review the populated form and letter preview.');
+        // A complete database record opens the preview in lookupEmployee.
+        // If some values are missing, the user can complete them and click again.
+        setStatus('Employee lookup completed. Review the populated fields, complete any missing details, then click Generate Letter again.');
+        return;
+      }
+
+      // Keep manual generation available if the employee record is not in
+      // the live database but the user has supplied every required field.
+      const manualError = validate();
+      if (!manualError) {
+        setLetter(true);
+        setStatus('Letter preview generated from the details entered manually.');
       }
       return;
     }
+
     const error = validate();
     if (error) { setStatus(error); return; }
     setLetter(true);
@@ -265,7 +280,6 @@ function App() {
       <div className="grid">
         {fields.map(([name, label, type]) => <label key={name}>{label}
           <input name={name} type={type} value={form[name]} onChange={update}
-            onBlur={name === 'employeeId' ? () => lookupEmployee() : undefined}
             minLength={['name', 'employeeId', 'designation', 'email'].includes(name) ? 1 : undefined}
             maxLength={50} max={name === 'letterDate' ? getToday() : undefined}
             pattern={name === 'employeeId' ? '[A-Z0-9]{1,50}' : undefined}
@@ -275,7 +289,7 @@ function App() {
         </label>)}
       </div>
       <div className="actions">
-        <button onClick={generate} disabled={loading}>{loading ? 'Please wait...' : 'Generate Letter'}</button>
+        <button type="button" onClick={generate} disabled={loading}>{loading ? 'Please wait...' : 'Generate Letter'}</button>
         <button className="secondary" onClick={() => loadHistory()} disabled={loading || historyLoading}>{historyLoading ? 'Searching...' : 'Find Letter History'}</button>
       </div>
     </section>
